@@ -95,6 +95,8 @@ from . import github_login
 from . import oca_projects
 from .config import read_config
 
+MANIFESTS = ('__openerp__.py', '__manifest__.py', '__unported__.py')
+
 
 class BranchMigrator(object):
     def __init__(self, source, target, target_org=None, email=None):
@@ -158,7 +160,13 @@ class BranchMigrator(object):
                 continue
             module_contents = repo.contents(
                 root_content.path, self.gh_target_branch)
-            manifest = module_contents.get('__openerp__.py')
+            if not module_contents:
+                # Module was present in history, but not in current source
+                continue
+            for manifest_file in MANIFESTS:
+                manifest = module_contents.get(manifest_file)
+                if manifest:
+                    break
             if manifest:
                 modules.append(root_content.path)
                 # Re-read path for retrieving content
@@ -176,8 +184,31 @@ class BranchMigrator(object):
             repo, tree_data, "[MIG] Make modules uninstallable")
         return modules
 
-    def _delete_unported_dir(self, repo, root_contents):
-        if '__unported__' not in root_contents.keys():
+    def _rename_manifests(self, repo, root_contents):
+        """ Rename __openerp__.py to __unported__.py to prevent obsolete
+        imports (osv, orm) from breaking server loading """
+        if self.gh_target_branch != '10.0':
+            return
+        branch = repo.branch(self.gh_target_branch)
+        tree = repo.tree(branch.commit.sha).recurse().tree
+        tree_data = []
+        for entry in tree:
+            if entry.type == 'tree':
+                continue
+            path = entry.path
+            if path.endswith('__openerp__.py'):
+                path = path.replace('__openerp__.py', '__unported__.py')
+            tree_data.append({
+                'path': path,
+                'sha': entry.sha,
+                'type': entry.type,
+                'mode': entry.mode,
+            })
+        self._create_commit(
+            repo, tree_data, "[MIG] Rename manifest files", use_sha=False)
+
+    def _delete_unported_dir(self, repo):
+        if not repo.contents('__unported__', self.gh_target_branch):
             return
         branch = repo.branch(self.gh_target_branch)
         tree = repo.tree(branch.commit.sha).tree
@@ -262,7 +293,8 @@ class BranchMigrator(object):
             source_branch.commit.sha)
         root_contents = repo.contents('/', self.gh_target_branch)
         modules = self._mark_modules_uninstallable(repo, root_contents)
-        self._delete_unported_dir(repo, root_contents)
+        self._rename_manifests(repo, root_contents)
+        self._delete_unported_dir(repo)
         self._update_metafiles(repo, root_contents)
         self._make_default_branch(repo)
         milestone = self._create_branch_milestone(repo)
