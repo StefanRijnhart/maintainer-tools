@@ -298,7 +298,7 @@ class BranchMigrator(object):
         self._update_metafiles(repo, root_contents)
         self._make_default_branch(repo)
         milestone = self._create_branch_milestone(repo)
-        self._create_migration_issue(repo, modules, milestone)
+        self._create_migration_issue(repo, sorted(modules), milestone)
 
     def do_migration(self, projects=None):
         if not projects:
